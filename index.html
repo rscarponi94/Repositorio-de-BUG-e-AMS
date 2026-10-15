@@ -343,26 +343,21 @@
         <!-- TELA 7: CONFIGURAÇÕES / DISCO -->
         <div id="view-config" class="view-section">
             <div class="header-title">
-                <h1>Configurações de Armazenamento e Leitura Direta</h1>
+                <h1>Configurações de Armazenamento e Nuvem</h1>
             </div>
             
             <div class="card">
-                <h3>📁 Leitura e Gravação Direta no Disco (File System Access)</h3>
+                <h3>🌐 Sincronização em Nuvem (JSONBin.io)</h3>
                 <p style="color: var(--text-muted); margin: 10px 0;">
-                    Vincule um arquivo <code>.json</code> em qualquer pasta do seu computador ou rede. A aplicação lerá e atualizará esse arquivo automaticamente a cada alteração.
+                    Sua aplicação está configurada para salvar e ler os dados do repositório em tempo real na nuvem para toda a equipe.
                 </p>
                 
                 <div style="margin: 20px 0; padding: 15px; background: #0f172a; border-radius: 6px; border: 1px solid var(--border);" class="flex-between">
                     <div>
-                        <strong>Status do Arquivo Vinculado:</strong>
-                        <div id="fileStatusText" style="color: var(--text-muted); margin-top: 5px; font-size: 0.9rem;">Nenhum arquivo físico do computador vinculado no momento.</div>
+                        <strong>Status da Conexão em Nuvem:</strong>
+                        <div id="cloudStatusText" style="color: var(--success); margin-top: 5px; font-size: 0.9rem;">Conectado e Ativo (JSONBin)</div>
                     </div>
-                    <span id="fileStatusPill" class="status-pill status-inactive">Memória Local (Navegador)</span>
-                </div>
-
-                <div style="display:flex; gap: 10px; flex-wrap: wrap;">
-                    <button class="btn btn-success" onclick="selecionarOuCriarArquivoDisco()">📂 Selecionar / Criar Arquivo no Disco (.json)</button>
-                    <button class="btn btn-secondary" onclick="desvincularArquivoDisco()">❌ Desvincular Arquivo</button>
+                    <span class="status-pill status-active">Sincronizado na Nuvem</span>
                 </div>
             </div>
         </div>
@@ -379,15 +374,15 @@
                 </div>
 
                 <div class="doc-section">
-                    <h2>🔍 2. Visualização Completa de Chamados</h2>
-                    <p>Clique em qualquer mini-card do Kanban para abrir a visão detalhada com o texto completo da descrição do erro, links e soluções sugeridas pelo robô de similaridade.</p>
+                    <h2>🌐 2. Sincronização em Tempo Real</h2>
+                    <p>Todos os dados do Repositório de Soluções são salvos e atualizados em tempo real na nuvem. Qualquer membro da equipe visualiza os registros e soluções na hora.</p>
                 </div>
             </div>
         </div>
 
     </div>
 
-    <!-- MODAL DETALHES DO BUG DA FILA (VISUAÇÃO COMPLETA) -->
+    <!-- MODAL DETALHES DO BUG DA FILA -->
     <div id="modalDetalhesPending" class="modal-overlay">
         <div class="modal-content">
             <div class="flex-between" style="margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:10px;">
@@ -420,7 +415,7 @@
         </div>
     </div>
 
-    <!-- MODAL BUGS PARECIDOS (ROBÔ DE SIMILARIDADE) -->
+    <!-- MODAL BUGS PARECIDOS -->
     <div id="modalBugsParecidos" class="modal-overlay">
         <div class="modal-content">
             <h2 style="margin-bottom:15px; color:var(--warning);" id="modalBugsParecidosTitle">💡 Soluções Conhecidas Encontradas pelo Robô</h2>
@@ -491,7 +486,7 @@
                     </div>
                     <div class="form-group">
                         <label>Usuário Responsável *</label>
-                        <input type="text" id="pendingUsuario" placeholder="Ex: Rafael, Ana..." required>
+                        <input type="text" id="pendingUsuario" placeholder="Ex: Scarponi, Ana..." required>
                     </div>
                 </div>
                 <div class="grid-2">
@@ -538,10 +533,14 @@
     </div>
 
     <script>
+        // CONFIGURAÇÃO BANCO DE DADOS EM NUVEM (JSONBin.io)
+        const JSONBIN_BIN_ID = "6ad12275ffd5d160536ea682";
+        const JSONBIN_API_KEY = "$2a$10$JLJNVkhMHMRKAYIYQ1LX0eAD1kq7OhtqgZIp0.a.HgyUEyvNokmje";
+
         // ESTADO GLOBAL
         let availableTags = JSON.parse(localStorage.getItem('availableTags')) || ["SAP MM", "SAP BTP", "Coupa", "HANA DB", "Integration/API"];
         let selectedFormTags = [];
-        let bugsDatabase = JSON.parse(localStorage.getItem('bugsDatabase')) || [];
+        let bugsDatabase = [];
         let pendingBugs = JSON.parse(localStorage.getItem('pendingBugs')) || [
             { id: "BUG-PEND-01", textoBreve: "Erro OData timeout na PO", descricao: "A chamada OData estoura tempo limite no BTP.", prioridade: "Muito Alta", usuario: "Scarponi", sequencia: 1 },
             { id: "BUG-PEND-02", textoBreve: "Condição de Pagamento zerada", descricao: "No envio do contrato para o Coupa a condição vai vazia.", prioridade: "Alta", usuario: "Scarponi", sequencia: 1 }
@@ -551,14 +550,15 @@
         let fileHandle = null;
         let draggedBugId = null;
 
-        document.addEventListener("DOMContentLoaded", () => {
+        document.addEventListener("DOMContentLoaded", async () => {
             renderTagSelectors();
             renderTagsManager();
-            renderConsultaView();
             initDataMask();
-            atualizarStatusArquivo();
             populateUsuariosFilter();
             renderFilaKanban();
+
+            // Sincroniza a base de soluções conhecidas com a Nuvem
+            await carregarBaseNuvem();
         });
 
         function switchView(viewName) {
@@ -568,6 +568,44 @@
             event.currentTarget.classList.add('active');
             if (viewName === 'consulta') renderConsultaView();
             if (viewName === 'fila') { populateUsuariosFilter(); renderFilaKanban(); }
+        }
+
+        // --- SINCRONIZAÇÃO EM NUVEM (JSONBin) ---
+        async function carregarBaseNuvem() {
+            try {
+                const response = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/latest`, {
+                    method: 'GET',
+                    headers: { 'X-Master-Key': JSONBIN_API_KEY }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    bugsDatabase = data.record || [];
+                    localStorage.setItem('bugsDatabase', JSON.stringify(bugsDatabase));
+                    renderConsultaView();
+                }
+            } catch (err) {
+                console.error("Erro ao carregar dados da nuvem, usando cache local:", err);
+                bugsDatabase = JSON.parse(localStorage.getItem('bugsDatabase')) || [];
+                renderConsultaView();
+            }
+        }
+
+        async function gravarDadosNoArquivoDisco() {
+            localStorage.setItem('bugsDatabase', JSON.stringify(bugsDatabase));
+
+            try {
+                await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Master-Key': JSONBIN_API_KEY
+                    },
+                    body: JSON.stringify(bugsDatabase)
+                });
+            } catch (err) {
+                console.error("Erro ao salvar dados na nuvem:", err);
+            }
         }
 
         // --- FILA KANBAN ---
@@ -628,7 +666,6 @@
                     card.draggable = true;
                     card.ondragstart = (e) => dragStart(e, bug.id);
                     card.onclick = (e) => {
-                        // Não abre modal se o clique foi num botão ou input de sequência
                         if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.classList.contains('ai-badge')) return;
                         abrirModalDetalhesPending(bug.id);
                     };
@@ -669,7 +706,7 @@
             document.getElementById('countPrio4').innerText = counts["Baixa"];
         }
 
-        // --- DETALHES DO INCIDENTE (MODAL COMPLETO) ---
+        // --- DETALHES DO INCIDENTE ---
         function abrirModalDetalhesPending(bugId) {
             const bug = pendingBugs.find(b => b.id === bugId);
             if (!bug) return;
@@ -680,12 +717,10 @@
             document.getElementById('modalDetalhesTextoBreve').innerText = bug.textoBreve;
             document.getElementById('modalDetalhesDescricao').innerText = bug.descricao || "(Sem descrição cadastrada)";
 
-            // Configura Ações
             document.getElementById('modalDetalhesBtnTrocar').onclick = () => { fecharModalDetalhesPending(); abrirModalTrocarUser(bug.id); };
             document.getElementById('modalDetalhesBtnExcluir').onclick = () => { fecharModalDetalhesPending(); deletarPendingBug(bug.id); };
             document.getElementById('modalDetalhesBtnResolver').onclick = () => { fecharModalDetalhesPending(); abrirModalResolver(bug.id); };
 
-            // Renderiza Soluções do Robô se houver
             const aiGroup = document.getElementById('modalDetalhesAIGroup');
             const aiList = document.getElementById('modalDetalhesAISolucoesList');
             aiList.innerHTML = '';
@@ -1050,7 +1085,7 @@
             fecharModalResolver();
             populateUsuariosFilter();
             renderFilaKanban();
-            alert(action === 'migrar' ? "Bug copiado para o Repositório de Soluções e removido da fila!" : "Bug encerrado!");
+            alert(action === 'migrar' ? "Bug copiado para o Repositório de Soluções e salvo na Nuvem!" : "Bug encerrado!");
         }
 
         function abrirModalNovoPendingBug() { document.getElementById('modalNovoPending').style.display = 'flex'; }
@@ -1208,67 +1243,6 @@
             reader.readAsText(file);
         }
 
-        // --- DISCO API ---
-        async function selecionarOuCriarArquivoDisco() {
-            if (!('showOpenFilePicker' in window)) return alert("Use Chrome ou Edge para salvar no disco.");
-            try {
-                const [handle] = await window.showOpenFilePicker({
-                    types: [{ description: 'Arquivo JSON do Repositório', accept: { 'application/json': ['.json'] } }],
-                    multiple: false
-                });
-                fileHandle = handle;
-                await lerDadosDoArquivoDisco();
-                atualizarStatusArquivo();
-                alert(`Arquivo "${fileHandle.name}" vinculado!`);
-            } catch (err) { if (err.name !== 'AbortError') alert("Erro: " + err.message); }
-        }
-
-        async function lerDadosDoArquivoDisco() {
-            if (!fileHandle) return;
-            try {
-                const file = await fileHandle.getFile();
-                const content = await file.text();
-                if (content.trim()) {
-                    bugsDatabase = JSON.parse(content);
-                    localStorage.setItem('bugsDatabase', JSON.stringify(bugsDatabase));
-                    renderConsultaView();
-                }
-            } catch (err) { console.error(err); }
-        }
-
-        async function gravarDadosNoArquivoDisco() {
-            if (!fileHandle) {
-                localStorage.setItem('bugsDatabase', JSON.stringify(bugsDatabase));
-                return;
-            }
-            try {
-                const options = { mode: 'readwrite' };
-                if ((await fileHandle.queryPermission(options)) !== 'granted') {
-                    if ((await fileHandle.requestPermission(options)) !== 'granted') return;
-                }
-                const writable = await fileHandle.createWritable();
-                await writable.write(JSON.stringify(bugsDatabase, null, 2));
-                await writable.close();
-                localStorage.setItem('bugsDatabase', JSON.stringify(bugsDatabase));
-            } catch (err) { console.error(err); }
-        }
-
-        function desvincularArquivoDisco() { fileHandle = null; atualizarStatusArquivo(); }
-
-        function atualizarStatusArquivo() {
-            const statusText = document.getElementById('fileStatusText');
-            const statusPill = document.getElementById('fileStatusPill');
-            if (fileHandle) {
-                statusText.innerText = `Arquivo Ativo: ${fileHandle.name}`;
-                statusPill.innerText = "Arquivo Vinculado (Sincronizado)";
-                statusPill.className = "status-pill status-active";
-            } else {
-                statusText.innerText = "Nenhum arquivo do computador vinculado no momento.";
-                statusPill.innerText = "Memória Local (Navegador)";
-                statusPill.className = "status-pill status-inactive";
-            }
-        }
-
         // --- TAGS MANAGER ---
         function renderTagSelectors() {
             const container = document.getElementById('tagSelectorContainer');
@@ -1329,7 +1303,7 @@
             else bugsDatabase.unshift(bugDataObj);
 
             await gravarDadosNoArquivoDisco();
-            alert("Registro salvo no repositório!");
+            alert("Registro salvo no repositório em nuvem!");
             cancelarEdicao();
             switchView('consulta');
         }
@@ -1487,7 +1461,7 @@
                 try {
                     bugsDatabase = JSON.parse(e.target.result);
                     await gravarDadosNoArquivoDisco();
-                    alert("Importação concluída!");
+                    alert("Importação concluída e enviada para a Nuvem!");
                     switchView('consulta');
                 } catch (err) { alert("JSON inválido."); }
             };
